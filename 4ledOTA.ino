@@ -13,7 +13,7 @@ const String firmwareURL = repoRaw + "4ledOTA.ino.bin";
 const String versionURL  = repoRaw + "version.txt";
 
 // VERSI 6 (Pastikan update version.txt di GitHub jadi 6 juga)
-const int currentVersion = 6;
+const int currentVersion = 7;
 
 // Pin LED
 int leds[] = {18, 19, 21, 22};
@@ -28,7 +28,7 @@ void setup() {
     digitalWrite(leds[i], LOW);
   }
 
-  Serial.println("\n--- BOOTING FIRMWARE V6 (PING-PONG) ---");
+  Serial.println("\n--- BOOTING FIRMWARE V7 (PING-PONG) ---");
   Serial.print("Connecting to WiFi");
   
   WiFi.begin(ssid, password);
