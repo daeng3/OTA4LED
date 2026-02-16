@@ -16,8 +16,8 @@ const char* mqtt_topic  = "levion/ota/4led";
 // --- KONFIGURASI GITHUB OTA ---
 const String firmwareURL = "https://raw.githubusercontent.com/daeng3/OTA4LED/main/4ledOTA.ino.bin";
 
-// VERSI 10
-const int currentVersion = 10;
+// VERSI 11 (Update versi)
+const int currentVersion = 11;
 
 // Pin LED
 int leds[] = {18, 19, 21, 22};
@@ -26,37 +26,46 @@ int leds[] = {18, 19, 21, 22};
 WiFiClient espClient;
 PubSubClient client(espClient);
 
-// Flag untuk Trigger Update
+// Flags Trigger
 bool updateTriggered = false;
+bool restartTriggered = false; // Flag baru untuk restart
 
 // --- FUNGSI CALLBACK MQTT ---
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
   String messageTemp;
   
-  Serial.print("Pesan MQTT Masuk [");
-  Serial.print(topic);
-  Serial.print("]: ");
-  
+  Serial.print("Pesan MQTT: ");
   for (int i = 0; i < length; i++) {
     messageTemp += (char)payload[i];
   }
+  
+  // Bersihkan spasi/enter dan ubah ke huruf kecil semua agar tidak sensitif case
+  messageTemp.trim();
+  messageTemp.toLowerCase();
+  
   Serial.println(messageTemp);
 
-  int incomingVersion = messageTemp.toInt();
-  
-  if (incomingVersion > currentVersion) {
-    Serial.printf("Versi Baru (%d) Diterima! Menjadwalkan Update...\n", incomingVersion);
-    updateTriggered = true;
-  } else {
-    Serial.println("Versi pesan sama/lebih rendah. Diabaikan.");
+  // LOGIKA 1: CEK APAKAH PERINTAH RESTART?
+  if (messageTemp == "restart" || messageTemp == "reboot") {
+    Serial.println(">> Perintah RESTART diterima!");
+    restartTriggered = true; // Aktifkan flag restart
+  }
+  // LOGIKA 2: CEK APAKAH ANGKA VERSI BARU?
+  else {
+    int incomingVersion = messageTemp.toInt();
+    if (incomingVersion > currentVersion) {
+      Serial.printf(">> Versi Baru (%d) Diterima! OTW Update...\n", incomingVersion);
+      updateTriggered = true;
+    } else {
+      Serial.println(">> Pesan bukan perintah restart & versi tidak lebih baru. Diabaikan.");
+    }
   }
 }
 
 // --- FUNGSI UPDATE OTA ---
 void run_ota_update() {
-  Serial.println("\n>>> UPDATE DIPICU LEWAT MQTT! Memulai Download V10... <<<");
-  
-  for(int i=0; i<4; i++) digitalWrite(leds[i], LOW);
+  Serial.println("Memulai Download OTA...");
+  for(int i=0; i<4; i++) digitalWrite(leds[i], LOW); // Matikan LED
 
   WiFiClientSecure clientSecure;
   clientSecure.setInsecure(); 
@@ -65,7 +74,6 @@ void run_ota_update() {
   httpUpdate.onProgress([](int cur, int total) {
       if (cur % (total / 10) == 0) Serial.printf("Download: %d%%\n", (cur * 100) / total);
   });
-  
   httpUpdate.rebootOnUpdate(true); 
 
   t_httpUpdate_return ret = httpUpdate.update(clientSecure, firmwareURL);
@@ -76,30 +84,39 @@ void run_ota_update() {
   }
 }
 
+// --- FUNGSI RESTART ---
+void perform_restart() {
+  Serial.println("Melakukan Restart dalam 3 detik...");
+  
+  // Beri tanda visual (Kedip cepat 5x) sebelum mati
+  for(int i=0; i<5; i++) {
+    for(int j=0; j<4; j++) digitalWrite(leds[j], HIGH);
+    delay(100);
+    for(int j=0; j<4; j++) digitalWrite(leds[j], LOW);
+    delay(100);
+  }
+  
+  ESP.restart();
+}
+
 // --- FUNGSI KONEKSI ---
 void setup_wifi() {
   if(WiFi.status() == WL_CONNECTED) return;
-  Serial.print("Connecting to WiFi");
+  Serial.print("Connecting WiFi...");
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500); Serial.print(".");
   }
-  Serial.println("\nWiFi Connected!");
+  Serial.println(" OK!");
 }
 
 void reconnect_mqtt() {
   if (!client.connected()) {
-    Serial.print("Connecting to MQTT...");
     String clientId = "ESP32_4LED_Client";
-    
     if (client.connect(clientId.c_str())) {
-      Serial.println(" Connected!");
+      Serial.println("MQTT Connected!");
       client.subscribe(mqtt_topic);
-      Serial.print("Subscribed to: ");
-      Serial.println(mqtt_topic);
     } else {
-      Serial.print(" Failed rc="); Serial.print(client.state());
-      Serial.println(" try again in 5s");
       delay(5000);
     }
   }
@@ -110,14 +127,10 @@ void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  for(int i=0; i<4; i++) {
-    pinMode(leds[i], OUTPUT);
-    digitalWrite(leds[i], LOW);
-  }
+  for(int i=0; i<4; i++) pinMode(leds[i], OUTPUT);
 
-  Serial.println("\n--- BOOTING FIRMWARE V10 (INWARD-OUTWARD) ---");
-  Serial.print("Current Version: ");
-  Serial.println(currentVersion);
+  Serial.println("\n--- BOOTING FIRMWARE V11 (MQTT RESTART) ---");
+  Serial.printf("Versi: %d\n", currentVersion);
 
   setup_wifi();
   client.setServer(mqtt_server, mqtt_port);
@@ -130,28 +143,27 @@ void loop() {
   if (!client.connected()) reconnect_mqtt();
   client.loop(); 
 
+  // Prioritas 1: Cek Restart
+  if (restartTriggered) {
+    perform_restart();
+  }
+
+  // Prioritas 2: Cek Update
   if (updateTriggered) {
     run_ota_update();
   }
 
-  if (!updateTriggered) {
+  // Prioritas 3: Animasi Normal (Inward-Outward)
+  if (!updateTriggered && !restartTriggered) {
     run_inward_outward_animation();
   }
 }
 
-// --- ANIMASI BARU V10 (INWARD - OUTWARD) ---
 void run_inward_outward_animation() {
-  // Nyala bagian LUAR (LED 0 dan 3)
-  digitalWrite(leds[0], HIGH);
-  digitalWrite(leds[1], LOW);
-  digitalWrite(leds[2], LOW);
-  digitalWrite(leds[3], HIGH);
+  digitalWrite(leds[0], HIGH); digitalWrite(leds[3], HIGH);
+  digitalWrite(leds[1], LOW); digitalWrite(leds[2], LOW);
   delay(300);
-
-  // Nyala bagian TENGAH (LED 1 dan 2)
-  digitalWrite(leds[0], LOW);
-  digitalWrite(leds[1], HIGH);
-  digitalWrite(leds[2], HIGH);
-  digitalWrite(leds[3], LOW);
+  digitalWrite(leds[0], LOW); digitalWrite(leds[3], LOW);
+  digitalWrite(leds[1], HIGH); digitalWrite(leds[2], HIGH);
   delay(300);
 }
