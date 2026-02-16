@@ -12,15 +12,15 @@ const String repoRaw = "https://raw.githubusercontent.com/daeng3/OTA4LED/main/";
 const String firmwareURL = repoRaw + "4ledOTA.ino.bin";
 const String versionURL  = repoRaw + "version.txt";
 
-// VERSI 8 (Jangan lupa update version.txt di GitHub jadi 8)
-const int currentVersion = 8;
+// VERSI 9 (Wajib update file version.txt di GitHub jadi angka 9)
+const int currentVersion = 9;
 
 // Pin LED
 int leds[] = {18, 19, 21, 22};
 
 // --- TIMER SETTINGS ---
 unsigned long lastCheckTime = 0;
-// Cek setiap 20 detik (Sedikit diperlama agar tidak spamming)
+// Cek setiap 20 detik
 const long checkInterval = 20000; 
 
 void setup() {
@@ -33,7 +33,7 @@ void setup() {
     digitalWrite(leds[i], LOW);
   }
 
-  Serial.println("\n--- BOOTING FIRMWARE V8 (LOADING BAR) ---");
+  Serial.println("\n--- BOOTING FIRMWARE V9 (POLICE STROBE) ---");
   connect_wifi();
   
   Serial.print("Current Device Version: ");
@@ -41,40 +41,46 @@ void setup() {
 }
 
 void loop() {
-  // 1. JALANKAN ANIMASI LED (Pola Loading Bar)
-  run_loading_animation();
+  // 1. JALANKAN ANIMASI LED (Pola Strobo)
+  run_police_animation();
 
-  // 2. CEK UPDATE OTOMATIS (Non-Blocking)
+  // 2. CEK UPDATE OTOMATIS
   unsigned long currentMillis = millis();
   
   if (currentMillis - lastCheckTime >= checkInterval) {
     lastCheckTime = currentMillis; 
     
-    // Cek koneksi sebelum request ke GitHub
+    // Cek koneksi sebelum request
     if (WiFi.status() == WL_CONNECTED) {
       check_and_update();
     } else {
-      Serial.println("WiFi Putus! Mencoba reconnect...");
+      Serial.println("WiFi terputus! Mencoba reconnect...");
       connect_wifi();
     }
   }
 }
 
-// --- FUNGSI ANIMASI V8 ---
-void run_loading_animation() {
-  // Nyalakan satu per satu (Menumpuk)
-  for(int i=0; i<4; i++) {
-    digitalWrite(leds[i], HIGH);
-    delay(200); 
+// --- FUNGSI ANIMASI V9 (STROBO) ---
+void run_police_animation() {
+  // KEDIP KIRI (LED 0 & 1) - 3 Kali Cepat
+  for(int j=0; j<3; j++) {
+    digitalWrite(leds[0], HIGH);
+    digitalWrite(leds[1], HIGH);
+    delay(40);
+    digitalWrite(leds[0], LOW);
+    digitalWrite(leds[1], LOW);
+    delay(40);
   }
   
-  delay(500); // Tahan sebentar saat penuh
-
-  // Matikan semua serentak
-  for(int i=0; i<4; i++) {
-    digitalWrite(leds[i], LOW);
+  // KEDIP KANAN (LED 2 & 3) - 3 Kali Cepat
+  for(int j=0; j<3; j++) {
+    digitalWrite(leds[2], HIGH);
+    digitalWrite(leds[3], HIGH);
+    delay(40);
+    digitalWrite(leds[2], LOW);
+    digitalWrite(leds[3], LOW);
+    delay(40);
   }
-  delay(300); // Jeda sebelum mulai lagi
 }
 
 // --- FUNGSI WIFI & OTA ---
@@ -101,7 +107,7 @@ int get_server_version() {
   client.setInsecure();
   HTTPClient http;
   
-  Serial.print("[Auto-Check] Checking version.txt... ");
+  Serial.print("[Auto-Check V9] Checking version.txt... ");
   
   http.begin(client, versionURL);
   http.addHeader("Cache-Control", "no-cache"); 
@@ -123,7 +129,7 @@ int get_server_version() {
 
 void update_progress(int cur, int total) {
   if (cur % (total / 10) == 0) { 
-    Serial.printf("Downloading V8: %d%%\n", (cur * 100) / total);
+    Serial.printf("Downloading V9: %d%%\n", (cur * 100) / total);
   }
 }
 
@@ -131,14 +137,14 @@ void check_and_update() {
   int serverVersion = get_server_version();
 
   if (serverVersion > currentVersion) {
-    Serial.println(">>> UPDATE DITEMUKAN! Memulai Download V8... <<<");
+    Serial.println(">>> UPDATE BARU DITEMUKAN! Memulai Download V9... <<<");
     
-    // Matikan semua LED saat download tanda sedang sibuk
+    // Matikan semua LED saat download tanda sedang proses
     for(int i=0; i<4; i++) digitalWrite(leds[i], LOW);
 
     WiFiClientSecure client;
     client.setInsecure();
-    client.setTimeout(15000); // Timeout agak lamaan dikit
+    client.setTimeout(15000); 
     
     httpUpdate.onProgress(update_progress);
     httpUpdate.rebootOnUpdate(true); 
@@ -148,7 +154,5 @@ void check_and_update() {
     if (ret == HTTP_UPDATE_FAILED) {
       Serial.printf("Update Gagal (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
     }
-  } else {
-    // Tidak ada update, lanjut loop biasa
   }
 }
