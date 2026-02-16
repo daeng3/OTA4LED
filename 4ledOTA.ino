@@ -17,9 +17,10 @@ const char* mqtt_topic  = "levion/ota/4led";
 const String firmwareURL = "https://raw.githubusercontent.com/daeng3/OTA4LED/main/4ledOTA.ino.bin";
 
 // VERSI 11 (Update versi)
-const int currentVersion = 11;
+const int currentVersion = 12;
 
 // Pin LED
+// Index 0=18, 1=19, 2=21, 3=22
 int leds[] = {18, 19, 21, 22};
 
 // Client Objects
@@ -28,7 +29,13 @@ PubSubClient client(espClient);
 
 // Flags Trigger
 bool updateTriggered = false;
-bool restartTriggered = false; // Flag baru untuk restart
+bool restartTriggered = false;
+
+// --- VARIABEL TIMING UNTUK ANIMASI (MILLIS) ---
+unsigned long previousMillisFlipFlop = 0;
+unsigned long previousMillisStrobe = 0;
+bool flipFlopState = false;
+int strobeState = 0;
 
 // --- FUNGSI CALLBACK MQTT ---
 void mqtt_callback(char* topic, byte* payload, unsigned int length) {
@@ -39,18 +46,15 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
     messageTemp += (char)payload[i];
   }
   
-  // Bersihkan spasi/enter dan ubah ke huruf kecil semua agar tidak sensitif case
   messageTemp.trim();
   messageTemp.toLowerCase();
   
   Serial.println(messageTemp);
 
-  // LOGIKA 1: CEK APAKAH PERINTAH RESTART?
   if (messageTemp == "restart" || messageTemp == "reboot") {
     Serial.println(">> Perintah RESTART diterima!");
-    restartTriggered = true; // Aktifkan flag restart
+    restartTriggered = true;
   }
-  // LOGIKA 2: CEK APAKAH ANGKA VERSI BARU?
   else {
     int incomingVersion = messageTemp.toInt();
     if (incomingVersion > currentVersion) {
@@ -65,7 +69,7 @@ void mqtt_callback(char* topic, byte* payload, unsigned int length) {
 // --- FUNGSI UPDATE OTA ---
 void run_ota_update() {
   Serial.println("Memulai Download OTA...");
-  for(int i=0; i<4; i++) digitalWrite(leds[i], LOW); // Matikan LED
+  for(int i=0; i<4; i++) digitalWrite(leds[i], LOW);
 
   WiFiClientSecure clientSecure;
   clientSecure.setInsecure(); 
@@ -87,15 +91,12 @@ void run_ota_update() {
 // --- FUNGSI RESTART ---
 void perform_restart() {
   Serial.println("Melakukan Restart dalam 3 detik...");
-  
-  // Beri tanda visual (Kedip cepat 5x) sebelum mati
   for(int i=0; i<5; i++) {
     for(int j=0; j<4; j++) digitalWrite(leds[j], HIGH);
     delay(100);
     for(int j=0; j<4; j++) digitalWrite(leds[j], LOW);
     delay(100);
   }
-  
   ESP.restart();
 }
 
@@ -122,6 +123,56 @@ void reconnect_mqtt() {
   }
 }
 
+// --- FUNGSI ANIMASI BARU (STROBO & FLIPFLOP) ---
+void run_custom_animation() {
+  unsigned long currentMillis = millis();
+
+  // --- BAGIAN 1: FLIP-FLOP (Pin 18 & 19) ---
+  // Kecepatan Flip-Flop: 500ms (0.5 detik)
+  if (currentMillis - previousMillisFlipFlop >= 500) {
+    previousMillisFlipFlop = currentMillis;
+    
+    flipFlopState = !flipFlopState; // Tukar status
+
+    if (flipFlopState) {
+      digitalWrite(leds[0], HIGH); // Pin 18 ON
+      digitalWrite(leds[1], LOW);  // Pin 19 OFF
+    } else {
+      digitalWrite(leds[0], LOW);  // Pin 18 OFF
+      digitalWrite(leds[1], HIGH); // Pin 19 ON
+    }
+  }
+
+  // --- BAGIAN 2: STROBO POLISI (Pin 21 & 22) ---
+  // Kecepatan Strobo: 40ms (Sangat Cepat)
+  if (currentMillis - previousMillisStrobe >= 40) {
+    previousMillisStrobe = currentMillis;
+    strobeState++;
+    
+    // Reset cycle setelah 12 step (biar ada jeda antar kedipan kiri/kanan)
+    if (strobeState > 11) strobeState = 0;
+
+    // Logika Kedip Polisi (3x Pin 21, lalu 3x Pin 22)
+    switch (strobeState) {
+      // Kedip Pin 21 (ON-OFF-ON-OFF-ON-OFF)
+      case 0: digitalWrite(leds[2], HIGH); digitalWrite(leds[3], LOW); break;
+      case 1: digitalWrite(leds[2], LOW);  digitalWrite(leds[3], LOW); break;
+      case 2: digitalWrite(leds[2], HIGH); digitalWrite(leds[3], LOW); break;
+      case 3: digitalWrite(leds[2], LOW);  digitalWrite(leds[3], LOW); break;
+      case 4: digitalWrite(leds[2], HIGH); digitalWrite(leds[3], LOW); break;
+      case 5: digitalWrite(leds[2], LOW);  digitalWrite(leds[3], LOW); break;
+
+      // Kedip Pin 22 (ON-OFF-ON-OFF-ON-OFF)
+      case 6: digitalWrite(leds[2], LOW); digitalWrite(leds[3], HIGH); break;
+      case 7: digitalWrite(leds[2], LOW); digitalWrite(leds[3], LOW);  break;
+      case 8: digitalWrite(leds[2], LOW); digitalWrite(leds[3], HIGH); break;
+      case 9: digitalWrite(leds[2], LOW); digitalWrite(leds[3], LOW);  break;
+      case 10: digitalWrite(leds[2],LOW); digitalWrite(leds[3], HIGH); break;
+      case 11: digitalWrite(leds[2],LOW); digitalWrite(leds[3], LOW);  break;
+    }
+  }
+}
+
 // --- SETUP ---
 void setup() {
   Serial.begin(115200);
@@ -129,7 +180,7 @@ void setup() {
 
   for(int i=0; i<4; i++) pinMode(leds[i], OUTPUT);
 
-  Serial.println("\n--- BOOTING FIRMWARE V11 (MQTT RESTART) ---");
+  Serial.println("\n--- BOOTING FIRMWARE CUSTOM STROBO/FLIPFLOP ---");
   Serial.printf("Versi: %d\n", currentVersion);
 
   setup_wifi();
@@ -149,21 +200,12 @@ void loop() {
   }
 
   // Prioritas 2: Cek Update
-  if (updateTriggered) {
+  else if (updateTriggered) {
     run_ota_update();
   }
 
-  // Prioritas 3: Animasi Normal (Inward-Outward)
-  if (!updateTriggered && !restartTriggered) {
-    run_inward_outward_animation();
+  // Prioritas 3: Animasi Custom (Strobo & FlipFlop)
+  else {
+    run_custom_animation();
   }
-}
-
-void run_inward_outward_animation() {
-  digitalWrite(leds[0], HIGH); digitalWrite(leds[3], HIGH);
-  digitalWrite(leds[1], LOW); digitalWrite(leds[2], LOW);
-  delay(300);
-  digitalWrite(leds[0], LOW); digitalWrite(leds[3], LOW);
-  digitalWrite(leds[1], HIGH); digitalWrite(leds[2], HIGH);
-  delay(300);
 }
