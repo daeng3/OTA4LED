@@ -10,10 +10,10 @@ const char* password = "levion1234";
 // --- KONFIGURASI GITHUB OTA ---
 const String repoRaw = "https://raw.githubusercontent.com/daeng3/OTA4LED/main/";
 const String firmwareURL = repoRaw + "4ledOTA.ino.bin";
-const String versionURL  = repoRaw + "version.txt"; // URL Gatekeeper
+const String versionURL  = repoRaw + "version.txt";
 
-// VERSI 5 (Ubah ini jadi 5)
-const int currentVersion = 5;
+// VERSI 6 (Pastikan update version.txt di GitHub jadi 6 juga)
+const int currentVersion = 6;
 
 // Pin LED
 int leds[] = {18, 19, 21, 22};
@@ -22,38 +22,54 @@ void setup() {
   Serial.begin(115200);
   delay(1000); 
 
+  // Inisialisasi LED
   for(int i=0; i<4; i++) {
     pinMode(leds[i], OUTPUT);
     digitalWrite(leds[i], LOW);
   }
 
-  Serial.println("\n--- BOOTING FIRMWARE V5 (SMART CHECK) ---");
+  Serial.println("\n--- BOOTING FIRMWARE V6 (PING-PONG) ---");
   Serial.print("Connecting to WiFi");
   
   WiFi.begin(ssid, password);
+  
+  int timeout = 0;
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    timeout++;
+    if (timeout > 20) ESP.restart(); // Restart jika lama tidak konek
   }
   
   Serial.println("\nWiFi Connected!");
   Serial.print("Device Version: ");
   Serial.println(currentVersion);
 
-  // Cek update dengan logika versi
+  // Cek update dengan logika anti-loop
   check_and_update();
 }
 
 void loop() {
-  // Pola V5: Cepat (Running LED Fast)
+  // --- POLA BARU: PING-PONG (Bolak Balik) ---
+  
+  // Gerak Maju (0 -> 1 -> 2 -> 3)
   for(int i=0; i<4; i++) {
     digitalWrite(leds[i], HIGH);
-    delay(100); // Lebih cepat dari V4
+    delay(150);
+    digitalWrite(leds[i], LOW);
+  }
+
+  // Gerak Mundur (2 -> 1) 
+  // Kita tidak nyalakan 3 dan 0 lagi agar gerakan terlihat halus
+  for(int i=2; i>0; i--) {
+    digitalWrite(leds[i], HIGH);
+    delay(150);
     digitalWrite(leds[i], LOW);
   }
 }
 
-// Fungsi untuk mengambil angka versi dari version.txt di GitHub
+// --- FUNGSI OTA (SMART CHECK) ---
+
 int get_server_version() {
   WiFiClientSecure client;
   client.setInsecure();
@@ -61,23 +77,23 @@ int get_server_version() {
   
   Serial.println("Checking version.txt on GitHub...");
   
-  if (http.begin(client, versionURL)) {
-    int httpCode = http.GET();
-    if (httpCode == HTTP_CODE_OK) {
-      String payload = http.getString();
-      payload.trim(); // Hapus spasi/enter yang tidak perlu
-      http.end();
-      return payload.toInt(); // Ubah text jadi angka
-    } else {
-      Serial.printf("Gagal ambil versi. HTTP Code: %d\n", httpCode);
-    }
+  // Tambahkan header cache-control agar tidak mengambil versi lama dari cache server
+  http.begin(client, versionURL);
+  http.addHeader("Cache-Control", "no-cache");
+  
+  int httpCode = http.GET();
+  if (httpCode == HTTP_CODE_OK) {
+    String payload = http.getString();
+    payload.trim();
     http.end();
+    return payload.toInt();
   }
-  return 0; // Return 0 jika gagal konek
+  http.end();
+  return 0;
 }
 
 void update_progress(int cur, int total) {
-  Serial.printf("Downloading: %d%%\r", (cur * 100) / total);
+  Serial.printf("Downloading V6: %d%%\r", (cur * 100) / total);
 }
 
 void check_and_update() {
@@ -85,31 +101,26 @@ void check_and_update() {
   Serial.print("Server Version: ");
   Serial.println(serverVersion);
 
-  // --- LOGIKA UTAMA PENCEGAH LOOP ---
   if (serverVersion > currentVersion) {
-    Serial.println("New version available! Starting update...");
+    Serial.println("New firmware found! Updating...");
     
     WiFiClientSecure client;
     client.setInsecure();
     client.setTimeout(12000);
+    
     httpUpdate.onProgress(update_progress);
     httpUpdate.rebootOnUpdate(false);
 
     t_httpUpdate_return ret = httpUpdate.update(client, firmwareURL);
 
-    switch (ret) {
-      case HTTP_UPDATE_FAILED:
-        Serial.printf("Update Failed (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
-        break;
-      case HTTP_UPDATE_OK:
-        Serial.println("Update Success! Rebooting...");
-        delay(1000);
-        ESP.restart();
-        break;
+    if (ret == HTTP_UPDATE_OK) {
+      Serial.println("\nUpdate Success! Rebooting...");
+      delay(1000);
+      ESP.restart();
+    } else {
+      Serial.printf("\nUpdate Failed (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
     }
   } else {
-    Serial.println("----------------------------------");
-    Serial.println("Device is up to date. No action.");
-    Serial.println("----------------------------------");
+    Serial.println("Device is up to date.");
   }
 }
