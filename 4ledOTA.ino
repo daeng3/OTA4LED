@@ -2,157 +2,156 @@
 #include <HTTPClient.h>
 #include <WiFiClientSecure.h>
 #include <HTTPUpdate.h>
+#include <PubSubClient.h>
 
 // --- KONFIGURASI WIFI ---
 const char* ssid     = "hadahade";
 const char* password = "levion1234";
 
-// --- KONFIGURASI GITHUB OTA ---
-const String repoRaw = "https://raw.githubusercontent.com/daeng3/OTA4LED/main/";
-const String firmwareURL = repoRaw + "4ledOTA.ino.bin";
-const String versionURL  = repoRaw + "version.txt";
+// --- KONFIGURASI MQTT ---
+const char* mqtt_server = "103.197.190.235";
+const int mqtt_port     = 1883;
+const char* mqtt_topic  = "levion/ota/4led";
 
-// VERSI 9 (Wajib update file version.txt di GitHub jadi angka 9)
-const int currentVersion = 9;
+// --- KONFIGURASI GITHUB OTA ---
+const String firmwareURL = "https://raw.githubusercontent.com/daeng3/OTA4LED/main/4ledOTA.ino.bin";
+
+// VERSI 10
+const int currentVersion = 10;
 
 // Pin LED
 int leds[] = {18, 19, 21, 22};
 
-// --- TIMER SETTINGS ---
-unsigned long lastCheckTime = 0;
-// Cek setiap 20 detik
-const long checkInterval = 20000; 
+// Client Objects
+WiFiClient espClient;
+PubSubClient client(espClient);
 
+// Flag untuk Trigger Update
+bool updateTriggered = false;
+
+// --- FUNGSI CALLBACK MQTT ---
+void mqtt_callback(char* topic, byte* payload, unsigned int length) {
+  String messageTemp;
+  
+  Serial.print("Pesan MQTT Masuk [");
+  Serial.print(topic);
+  Serial.print("]: ");
+  
+  for (int i = 0; i < length; i++) {
+    messageTemp += (char)payload[i];
+  }
+  Serial.println(messageTemp);
+
+  int incomingVersion = messageTemp.toInt();
+  
+  if (incomingVersion > currentVersion) {
+    Serial.printf("Versi Baru (%d) Diterima! Menjadwalkan Update...\n", incomingVersion);
+    updateTriggered = true;
+  } else {
+    Serial.println("Versi pesan sama/lebih rendah. Diabaikan.");
+  }
+}
+
+// --- FUNGSI UPDATE OTA ---
+void run_ota_update() {
+  Serial.println("\n>>> UPDATE DIPICU LEWAT MQTT! Memulai Download V10... <<<");
+  
+  for(int i=0; i<4; i++) digitalWrite(leds[i], LOW);
+
+  WiFiClientSecure clientSecure;
+  clientSecure.setInsecure(); 
+  clientSecure.setTimeout(15000); 
+  
+  httpUpdate.onProgress([](int cur, int total) {
+      if (cur % (total / 10) == 0) Serial.printf("Download: %d%%\n", (cur * 100) / total);
+  });
+  
+  httpUpdate.rebootOnUpdate(true); 
+
+  t_httpUpdate_return ret = httpUpdate.update(clientSecure, firmwareURL);
+
+  if (ret == HTTP_UPDATE_FAILED) {
+    Serial.printf("Update Gagal (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
+    updateTriggered = false; 
+  }
+}
+
+// --- FUNGSI KONEKSI ---
+void setup_wifi() {
+  if(WiFi.status() == WL_CONNECTED) return;
+  Serial.print("Connecting to WiFi");
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500); Serial.print(".");
+  }
+  Serial.println("\nWiFi Connected!");
+}
+
+void reconnect_mqtt() {
+  if (!client.connected()) {
+    Serial.print("Connecting to MQTT...");
+    String clientId = "ESP32_4LED_Client";
+    
+    if (client.connect(clientId.c_str())) {
+      Serial.println(" Connected!");
+      client.subscribe(mqtt_topic);
+      Serial.print("Subscribed to: ");
+      Serial.println(mqtt_topic);
+    } else {
+      Serial.print(" Failed rc="); Serial.print(client.state());
+      Serial.println(" try again in 5s");
+      delay(5000);
+    }
+  }
+}
+
+// --- SETUP ---
 void setup() {
   Serial.begin(115200);
   delay(1000);
 
-  // Inisialisasi LED
   for(int i=0; i<4; i++) {
     pinMode(leds[i], OUTPUT);
     digitalWrite(leds[i], LOW);
   }
 
-  Serial.println("\n--- BOOTING FIRMWARE V9 (POLICE STROBE) ---");
-  connect_wifi();
-  
-  Serial.print("Current Device Version: ");
+  Serial.println("\n--- BOOTING FIRMWARE V10 (INWARD-OUTWARD) ---");
+  Serial.print("Current Version: ");
   Serial.println(currentVersion);
+
+  setup_wifi();
+  client.setServer(mqtt_server, mqtt_port);
+  client.setCallback(mqtt_callback); 
 }
 
+// --- LOOP ---
 void loop() {
-  // 1. JALANKAN ANIMASI LED (Pola Strobo)
-  run_police_animation();
+  if (WiFi.status() != WL_CONNECTED) setup_wifi();
+  if (!client.connected()) reconnect_mqtt();
+  client.loop(); 
 
-  // 2. CEK UPDATE OTOMATIS
-  unsigned long currentMillis = millis();
-  
-  if (currentMillis - lastCheckTime >= checkInterval) {
-    lastCheckTime = currentMillis; 
-    
-    // Cek koneksi sebelum request
-    if (WiFi.status() == WL_CONNECTED) {
-      check_and_update();
-    } else {
-      Serial.println("WiFi terputus! Mencoba reconnect...");
-      connect_wifi();
-    }
+  if (updateTriggered) {
+    run_ota_update();
+  }
+
+  if (!updateTriggered) {
+    run_inward_outward_animation();
   }
 }
 
-// --- FUNGSI ANIMASI V9 (STROBO) ---
-void run_police_animation() {
-  // KEDIP KIRI (LED 0 & 1) - 3 Kali Cepat
-  for(int j=0; j<3; j++) {
-    digitalWrite(leds[0], HIGH);
-    digitalWrite(leds[1], HIGH);
-    delay(40);
-    digitalWrite(leds[0], LOW);
-    digitalWrite(leds[1], LOW);
-    delay(40);
-  }
-  
-  // KEDIP KANAN (LED 2 & 3) - 3 Kali Cepat
-  for(int j=0; j<3; j++) {
-    digitalWrite(leds[2], HIGH);
-    digitalWrite(leds[3], HIGH);
-    delay(40);
-    digitalWrite(leds[2], LOW);
-    digitalWrite(leds[3], LOW);
-    delay(40);
-  }
-}
+// --- ANIMASI BARU V10 (INWARD - OUTWARD) ---
+void run_inward_outward_animation() {
+  // Nyala bagian LUAR (LED 0 dan 3)
+  digitalWrite(leds[0], HIGH);
+  digitalWrite(leds[1], LOW);
+  digitalWrite(leds[2], LOW);
+  digitalWrite(leds[3], HIGH);
+  delay(300);
 
-// --- FUNGSI WIFI & OTA ---
-
-void connect_wifi() {
-  Serial.print("Connecting to WiFi");
-  WiFi.begin(ssid, password);
-  int timeout = 0;
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-    timeout++;
-    if (timeout > 10) break; 
-  }
-  if(WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi Connected!");
-  } else {
-    Serial.println("\nWiFi Failed (Skip)");
-  }
-}
-
-int get_server_version() {
-  WiFiClientSecure client;
-  client.setInsecure();
-  HTTPClient http;
-  
-  Serial.print("[Auto-Check V9] Checking version.txt... ");
-  
-  http.begin(client, versionURL);
-  http.addHeader("Cache-Control", "no-cache"); 
-  
-  int httpCode = http.GET();
-  if (httpCode == HTTP_CODE_OK) {
-    String payload = http.getString();
-    payload.trim();
-    int ver = payload.toInt();
-    Serial.printf("Server: %d | Device: %d\n", ver, currentVersion);
-    http.end();
-    return ver;
-  } else {
-    Serial.printf("Error HTTP: %d\n", httpCode);
-    http.end();
-    return 0;
-  }
-}
-
-void update_progress(int cur, int total) {
-  if (cur % (total / 10) == 0) { 
-    Serial.printf("Downloading V9: %d%%\n", (cur * 100) / total);
-  }
-}
-
-void check_and_update() {
-  int serverVersion = get_server_version();
-
-  if (serverVersion > currentVersion) {
-    Serial.println(">>> UPDATE BARU DITEMUKAN! Memulai Download V9... <<<");
-    
-    // Matikan semua LED saat download tanda sedang proses
-    for(int i=0; i<4; i++) digitalWrite(leds[i], LOW);
-
-    WiFiClientSecure client;
-    client.setInsecure();
-    client.setTimeout(15000); 
-    
-    httpUpdate.onProgress(update_progress);
-    httpUpdate.rebootOnUpdate(true); 
-
-    t_httpUpdate_return ret = httpUpdate.update(client, firmwareURL);
-
-    if (ret == HTTP_UPDATE_FAILED) {
-      Serial.printf("Update Gagal (%d): %s\n", httpUpdate.getLastError(), httpUpdate.getLastErrorString().c_str());
-    }
-  }
+  // Nyala bagian TENGAH (LED 1 dan 2)
+  digitalWrite(leds[0], LOW);
+  digitalWrite(leds[1], HIGH);
+  digitalWrite(leds[2], HIGH);
+  digitalWrite(leds[3], LOW);
+  delay(300);
 }
