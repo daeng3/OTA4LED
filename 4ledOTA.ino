@@ -9,10 +9,10 @@ const char* password = "levion1234";
 
 // --- KONFIGURASI GITHUB OTA ---
 // Gunakan link RAW (harus diawali raw.githubusercontent.com)
-const String firmwareURL = "https://raw.githubusercontent.com/daeng3/OTA4LED/main/4ledOTA.ino.bin";
+const String firmwareURL = "https://raw.githubusercontent.com/daeng3/OTA4LED/refs/heads/main/4ledOTA.ino.bin";
 
 // Versi firmware saat ini (Tingkatkan angka ini setiap kali mau update)
-const int currentVersion = 1;
+const int currentVersion = 2;
 
 // Pin LED
 int leds[] = {18, 19, 21, 22};
